@@ -51,6 +51,14 @@ def _no_key() -> str:
     raise AisaError("no AIsa key: set AISA_API_KEY, or log in with the AIsa CLI (`aisa login`)")
 
 
+def has_key() -> bool:
+    """True when AISA_API_KEY is configured or the CLI has stored credentials."""
+    try:
+        return bool(key())
+    except AisaError:
+        return False
+
+
 def _post(url: str, body: dict, timeout: int) -> dict:
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {key()}",

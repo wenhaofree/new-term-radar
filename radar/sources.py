@@ -15,7 +15,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import UA, aisa, snap
+from . import UA, aisa, nitter, snap
 from .i18n import t
 from .terms import STOP, _drop_nested, names
 
@@ -86,13 +86,27 @@ def x_new(cfg: dict, state: Path) -> dict:
     handles = accounts(cfg)
     if not handles:
         return {"skipped": True}
-    data, cost = aisa.call_all([{"call_id": h, "tool": "get_twitter_user_last_tweets", "arguments": {"userName": h}}
-                                for h in handles])
     posts = []
-    for h in handles:
-        for tw in ((data.get(h) or {}).get("data") or {}).get("tweets") or []:
-            posts.append({"account": h, "text": tw.get("text") or "", "likes": int(tw.get("likeCount") or 0),
-                          "url": tw.get("url", ""), "created": _posted(tw)})
+    answered = 0
+    cost = 0
+    fetched = False
+
+    if aisa.has_key():
+        try:
+            data, cost = aisa.call_all([{"call_id": h, "tool": "get_twitter_user_last_tweets", "arguments": {"userName": h}}
+                                        for h in handles])
+            for h in handles:
+                for tw in ((data.get(h) or {}).get("data") or {}).get("tweets") or []:
+                    posts.append({"account": h, "text": tw.get("text") or "", "likes": int(tw.get("likeCount") or 0),
+                                  "url": tw.get("url", ""), "created": _posted(tw)})
+            answered = len(data)
+            fetched = True
+        except Exception:
+            fetched = False
+
+    if not fetched:
+        posts, answered = nitter.fetch_posts(handles, cfg)
+
     path = state / "x_vocab.json.gz"
     vocab: dict[str, str] | None = snap.load(path)
     first_run = vocab is None
@@ -106,7 +120,7 @@ def x_new(cfg: dict, state: Path) -> dict:
             vocab[term] = today
     if posts:   # a failed fetch keeps yesterday's vocabulary
         snap.save(path, {term: d for term, d in vocab.items() if d >= cutoff})
-    return {"accounts": len(handles), "answered": len(data), "posts": len(posts), "cost_micros": cost,
+    return {"accounts": len(handles), "answered": answered, "posts": len(posts), "cost_micros": cost,
             "first_run": first_run, "terms": rows}
 
 
