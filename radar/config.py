@@ -35,6 +35,7 @@ DEFAULTS = {
     "pains": {"model": "gpt-4.1-mini", "extensions": 5, "review_pages": 2, "max_stars": 3, "reddit_time": "year", "videos": 3,
               "reddit_queries": ["{k} alternative", "{k} frustrating", '"{k}" "doesn\'t work"', "{k} wish there was"]},
     "tutorials": {"max_leads": 3, "videos": 3, "model": "gpt-4.1-mini"},
+    "nitter": {"base_url": "https://nitter.wenhaofree.com", "timeout": 45, "pause": 1.5, "retries": 3},
     "gsc": {},
 }
 

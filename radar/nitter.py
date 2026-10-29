@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 
 DEFAULT_BASE_URL = "https://nitter.wenhaofree.com"
 DEFAULT_PAUSE = 1.5
-DEFAULT_TIMEOUT = 15
+DEFAULT_TIMEOUT = 45
+DEFAULT_RETRIES = 3
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -93,13 +94,62 @@ def parse_timeline(html_content: str, handle: str) -> list[dict]:
     return posts
 
 
-def fetch_account_posts(handle: str, base_url: str = DEFAULT_BASE_URL, timeout: int = DEFAULT_TIMEOUT) -> list[dict]:
-    """Fetch and parse tweets for a single Twitter account from Nitter."""
+def fetch_account_posts(
+    handle: str,
+    base_url: str = DEFAULT_BASE_URL,
+    timeout: int = DEFAULT_TIMEOUT,
+    retries: int = DEFAULT_RETRIES,
+) -> list[dict]:
+    """Fetch and parse tweets for a single Twitter account from Nitter with automatic retries on timeout or rate limit."""
     url = f"{base_url.rstrip('/')}/{handle}"
     req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-        content = res.read().decode("utf-8", errors="replace")
-    return parse_timeline(content, handle)
+
+    for attempt in range(1, retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                content = res.read().decode("utf-8", errors="replace")
+            return parse_timeline(content, handle)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                if attempt < retries:
+                    backoff = 6.0 * attempt
+                    sys.stderr.write(f"nitter: 429 rate limit on @{handle}, backing off {backoff:.1f}s (attempt {attempt}/{retries})...\n")
+                    time.sleep(backoff)
+                    continue
+                sys.stderr.write(f"nitter: 429 rate limit on @{handle} after {retries} attempts, skipping\n")
+                return []
+            if exc.code == 404:
+                sys.stderr.write(f"nitter: account @{handle} not found (404), skipping\n")
+                return []
+            if exc.code in (500, 502, 503, 504):
+                if attempt < retries:
+                    sys.stderr.write(f"nitter: HTTP {exc.code} on @{handle}, retrying ({attempt}/{retries})...\n")
+                    time.sleep(3.0 * attempt)
+                    continue
+            sys.stderr.write(f"nitter: HTTP error {exc.code} for @{handle}, skipping\n")
+            return []
+        except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
+            err_msg = str(exc)
+            is_timeout = isinstance(exc, TimeoutError) or "timed out" in err_msg.lower() or "handshake" in err_msg.lower()
+            if is_timeout:
+                if attempt < retries:
+                    backoff = 3.0 * attempt
+                    sys.stderr.write(f"nitter: @{handle} read timed out ({timeout}s), retrying in {backoff:.1f}s ({attempt}/{retries})...\n")
+                    time.sleep(backoff)
+                    continue
+                sys.stderr.write(f"nitter: @{handle} timed out after {retries} attempts ({timeout}s each), skipping\n")
+                return []
+            if attempt < retries:
+                sys.stderr.write(f"nitter: network error on @{handle}: {exc}, retrying ({attempt}/{retries})...\n")
+                time.sleep(2.0 * attempt)
+                continue
+            sys.stderr.write(f"nitter: error fetching @{handle}: {exc}, skipping\n")
+            return []
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"nitter: unexpected error for @{handle}: {exc}, skipping\n")
+            return []
+
+    return []
 
 
 def fetch_posts(handles: list[str], cfg: dict) -> tuple[list[dict], int]:
@@ -107,28 +157,18 @@ def fetch_posts(handles: list[str], cfg: dict) -> tuple[list[dict], int]:
     Returns (posts, answered_account_count)."""
     nitter_cfg = cfg.get("nitter", {}) if isinstance(cfg, dict) else {}
     base_url = nitter_cfg.get("base_url") or os.environ.get("NITTER_BASE_URL") or DEFAULT_BASE_URL
-    pause = float(nitter_cfg.get("pause", DEFAULT_PAUSE))
-    timeout = int(nitter_cfg.get("timeout", DEFAULT_TIMEOUT))
+    pause = float(os.environ.get("NITTER_PAUSE") or nitter_cfg.get("pause", DEFAULT_PAUSE))
+    timeout = int(os.environ.get("NITTER_TIMEOUT") or nitter_cfg.get("timeout", DEFAULT_TIMEOUT))
+    retries = int(os.environ.get("NITTER_RETRIES") or nitter_cfg.get("retries", DEFAULT_RETRIES))
 
     posts: list[dict] = []
     answered = 0
 
     for i, handle in enumerate(handles):
-        try:
-            account_posts = fetch_account_posts(handle, base_url=base_url, timeout=timeout)
+        account_posts = fetch_account_posts(handle, base_url=base_url, timeout=timeout, retries=retries)
+        if account_posts:
             posts.extend(account_posts)
             answered += 1
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                # Rate limited: back off briefly
-                sys.stderr.write(f"nitter: 429 rate limit on @{handle}, backing off...\n")
-                time.sleep(5.0)
-            elif exc.code == 404:
-                sys.stderr.write(f"nitter: account @{handle} not found (404), skipping\n")
-            else:
-                sys.stderr.write(f"nitter: HTTP error {exc.code} for @{handle}, skipping\n")
-        except Exception as exc:  # noqa: BLE001
-            sys.stderr.write(f"nitter: error fetching @{handle}: {exc}, skipping\n")
 
         # Sleep between requests to avoid trigger anti-bot / rate limit
         if i < len(handles) - 1 and pause > 0:

@@ -100,11 +100,11 @@ def x_new(cfg: dict, state: Path) -> dict:
                     posts.append({"account": h, "text": tw.get("text") or "", "likes": int(tw.get("likeCount") or 0),
                                   "url": tw.get("url", ""), "created": _posted(tw)})
             answered = len(data)
-            fetched = True
+            fetched = bool(posts)
         except Exception:
             fetched = False
 
-    if not fetched:
+    if not fetched or not posts:
         posts, answered = nitter.fetch_posts(handles, cfg)
 
     path = state / "x_vocab.json.gz"
