@@ -2,15 +2,21 @@
 
 This repo is the **collector**. It still writes `state/` (SQLite + snapshots) for diffs and the 14-day review. When `DATABASE_URL` is set, each `daily` run also upserts product tables for a separate frontend.
 
+**Production on a VPS that already runs `wenhao-postgres` on Docker network `wenhao-services` (no host port):** follow the Chinese runbook [`服务器部署.md`](../服务器部署.md) — join that network, use `wenhao-postgres` as the DB host with `sslmode=require`, and schedule `scripts/run-daily-docker.sh`.
+
 ## 1. Database
 
+Local / laptop (optional compose Postgres on the host):
+
 ```bash
-docker compose up -d
+docker network create wenhao-services   # once, if missing
+docker compose --profile local-db up -d postgres
 cp .env.example .env   # fill AISA_API_KEY, DATABASE_URL, optional webhooks
 uv sync --extra pg --extra mail
 ```
 
-Default URL: `postgresql://radar:radar@127.0.0.1:5432/radar`
+Local URL: `postgresql://radar:radar@127.0.0.1:5432/radar`  
+Production URL (from the radar container): `postgresql://radar:…@wenhao-postgres:5432/radar?sslmode=require`
 
 Tables (created on first write):
 

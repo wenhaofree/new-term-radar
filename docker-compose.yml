@@ -1,9 +1,29 @@
-# Local PostgreSQL for the product store (reports / keyword_opportunities / discovered_leads).
-# Usage: docker compose up -d
-# Then: DATABASE_URL=postgresql://radar:radar@127.0.0.1:5432/radar
+# Production collector: joins existing wenhao-postgres on Docker network wenhao-services
+# (no host port publish on that Postgres). Build once, run daily via cron:
+#
+#   docker compose build
+#   docker compose run --rm radar
+#
+# Local Postgres only (dev machine; create the network once if missing):
+#   docker network create wenhao-services
+#   docker compose --profile local-db up -d postgres
+#   DATABASE_URL=postgresql://radar:radar@127.0.0.1:5432/radar
 
 services:
+  radar:
+    build: .
+    env_file: .env
+    working_dir: /app
+    volumes:
+      - ./state:/app/state
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config.json:/app/config.json:ro
+    networks:
+      - wenhao-services
+
   postgres:
+    profiles: ["local-db"]
     image: postgres:16-alpine
     container_name: radar-postgres
     environment:
@@ -19,6 +39,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+networks:
+  wenhao-services:
+    external: true
 
 volumes:
   radar_pg_data:

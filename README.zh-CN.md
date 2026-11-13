@@ -433,7 +433,10 @@ DeepSeek Harness 不会把环境里像密钥的变量传给服务器，所以 ke
 
 ## VPS 定时采集 + PostgreSQL（产品库）
 
-采集端仍用本地 `state/` 做差分与复盘；配置 `DATABASE_URL` 后，每次 `daily` 会把报告批次与关键词机会矩阵写入 PostgreSQL，供独立前端读取。含 API 预检、飞书/钉钉/Telegram 告警、`flock` 防并发。见 [docs/deploy.md](docs/deploy.md)。
+采集端仍用本地 `state/` 做差分与复盘；配置 `DATABASE_URL` 后，每次 `daily` 会把报告批次与关键词机会矩阵写入 PostgreSQL，供独立前端读取。含 API 预检、飞书/钉钉/Telegram 告警、`flock` 防并发。
+
+- 生产（已有 `wenhao-postgres`、网络 `wenhao-services`、无宿主机端口）：见 [服务器部署.md](服务器部署.md)（Docker 组网 + cron）。
+- 通用说明：[docs/deploy.md](docs/deploy.md)。
 
 ## 各部分怎么判断
 
