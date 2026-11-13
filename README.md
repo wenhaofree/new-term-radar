@@ -436,6 +436,10 @@ DeepSeek Harness does not pass the variables that look like keys on to a server,
 3. Add the secret `AISA_API_KEY`; optionally `GOANYAPI_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM`, `RADAR_EMAIL_TO`, `GSC_TOKEN_JSON`.
 4. Set the repository variable `RADAR_ENABLED` to `true`.
 
+## VPS cron + PostgreSQL (product DB)
+
+Local `state/` still holds diffs and the 14-day review. With `DATABASE_URL` set, each `daily` run also upserts report batches and the keyword opportunity matrix for a separate frontend. Includes API preflight, Feishu/DingTalk/Telegram alerts, and `flock` against overlapping cron runs. See [docs/deploy.md](docs/deploy.md).
+
 ## How the pieces decide
 
 - **Names in posts** (`radar/terms.py`): capitalised words, words with a digit (`Qwen3.8`) or inner capitals (`HyperFrames`); a number after a name joins it (`Opus 5.5`). A name two accounts used counts; a name one account used needs 100 likes and must be unmistakably a name, since a capitalised word is often just the start of a sentence.

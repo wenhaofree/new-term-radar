@@ -1,9 +1,10 @@
-"""Mail a report (Markdown) through Resend. Optional.
+"""Mail a report (Markdown) through Resend, and/or alert via webhook (Feishu / DingTalk / Telegram).
 
-Environment: RESEND_API_KEY, EMAIL_FROM (an address on a domain you verified in Resend),
-RADAR_EMAIL_TO (comma-separated for several). Without RADAR_EMAIL_TO it says so and does
-nothing: a missing recipient must not fail the run that produced the report.
-Needs the `markdown` package (pip install markdown).
+Environment for mail: RESEND_API_KEY, EMAIL_FROM, RADAR_EMAIL_TO (comma-separated).
+Without RADAR_EMAIL_TO mail is skipped: a missing recipient must not fail the run.
+
+Environment for alerts: RADAR_WEBHOOK_URL, RADAR_WEBHOOK_TYPE=feishu|dingtalk|telegram|generic
+(default feishu when URL looks like open.feishu.cn / flybook, else generic JSON {text}).
 """
 from __future__ import annotations
 
@@ -69,3 +70,56 @@ def send(subject: str, md_text: str) -> str:
             return f"mail sent ({res.status})"
     except urllib.error.HTTPError as exc:
         raise SystemExit(f"Resend {exc.code}: {exc.read().decode('utf-8', 'replace')[:300]}") from exc
+
+
+def webhook_type(url: str = "") -> str:
+    explicit = (os.environ.get("RADAR_WEBHOOK_TYPE") or "").strip().lower()
+    if explicit in ("feishu", "dingtalk", "telegram", "generic"):
+        return explicit
+    u = (url or os.environ.get("RADAR_WEBHOOK_URL") or "").lower()
+    if "feishu" in u or "larksuite" in u or "flybook" in u:
+        return "feishu"
+    if "dingtalk" in u or "oapi.dingtalk" in u:
+        return "dingtalk"
+    if "api.telegram.org" in u:
+        return "telegram"
+    return "generic"
+
+
+def _payload(kind: str, title: str, text: str) -> dict:
+    body = f"{title}\n{text}".strip()
+    if kind == "feishu":
+        return {
+            "msg_type": "post",
+            "content": {
+                "post": {
+                    "zh_cn": {
+                        "title": title[:80] or "radar",
+                        "content": [[{"tag": "text", "text": text[:3500]}]],
+                    }
+                }
+            },
+        }
+    if kind == "dingtalk":
+        return {"msgtype": "text", "text": {"content": body[:3500]}}
+    if kind == "telegram":
+        return {"text": body[:3500]}
+    return {"text": body, "title": title, "message": text}
+
+
+def alert(title: str, text: str) -> str:
+    """Post an alert to RADAR_WEBHOOK_URL. Skips quietly when unset."""
+    url = (os.environ.get("RADAR_WEBHOOK_URL") or "").strip()
+    if not url:
+        return "alert skipped: RADAR_WEBHOOK_URL not set"
+    kind = webhook_type(url)
+    data = json.dumps(_payload(kind, title, text), ensure_ascii=False).encode()
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "Content-Type": "application/json", "User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as res:
+            return f"alert sent ({kind}, {res.status})"
+    except urllib.error.HTTPError as exc:
+        return f"alert failed HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')[:200]}"
+    except (OSError, ValueError) as exc:
+        return f"alert failed: {type(exc).__name__}: {exc}"

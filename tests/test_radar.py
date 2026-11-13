@@ -462,8 +462,9 @@ def test_daily_run_writes_a_report_when_every_signal_is_down(tmp_path, monkeypat
     for mod, fn in ((cli.sources, "x_new"), (cli.sources, "hf_new"), (cli.breakout, "breakouts"), (cli.sitemaps, "diff")):
         monkeypatch.setattr(mod, fn, down)
     out = tmp_path / "report.md"
+    # Signal errors make status partial/failed → exit 1 (cron-visible); the report is still written.
     assert cli.main(["daily", "--config", str(_write_config(tmp_path)), "--state", str(tmp_path / "s"), "--out", str(out),
-                     "--skip", "newsites,review"]) == 0
+                     "--skip-preflight", "--skip", "newsites,review,usecases"]) == 1
     text = out.read_text()
     assert text.count("network is down") >= 4 and out.with_suffix(".json").exists()
 
@@ -473,8 +474,8 @@ def test_daily_report_in_chinese(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.breakout, "breakouts", lambda cfg, state: {"searched": 120, "first_run": False, "terms": [], "repos": [
         {"repo": "Niko1221/Strata", "stars": 7734, "velocity": 859, "delta": 600, "age_days": 9.0, "description": "Qwen3.8", "new": True}]})
     out = tmp_path / "report.md"
-    cli.main(["daily", "--config", str(_write_config(tmp_path, lang="zh")), "--state", str(tmp_path / "s"), "--out", str(out),
-              "--skip", "x,hf,sitemaps,newsites,review"])
+    assert cli.main(["daily", "--config", str(_write_config(tmp_path, lang="zh")), "--state", str(tmp_path / "s"), "--out", str(out),
+                     "--skip-preflight", "--skip", "x,hf,sitemaps,newsites,review,usecases"]) == 0
     text = out.read_text()
     assert "## 新词雷达" in text and "🆕 [Niko1221/Strata]" in text and "| +600 |" in text
 

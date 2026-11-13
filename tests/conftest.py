@@ -9,6 +9,8 @@ from radar import aisa, config, dotcom, goanyapi, i18n, page_age
 def english(monkeypatch):
     i18n.set_lang("en")
     monkeypatch.delenv("GOANYAPI_API_KEY", raising=False)   # the optional source is off unless a test turns it on
+    monkeypatch.delenv("DATABASE_URL", raising=False)       # product DB off unless a test turns it on
+    monkeypatch.delenv("RADAR_WEBHOOK_URL", raising=False)
 
     def no_network(*a, **k):
         raise goanyapi.GoAnyError("no network in tests")

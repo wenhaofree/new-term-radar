@@ -431,6 +431,10 @@ DeepSeek Harness 不会把环境里像密钥的变量传给服务器，所以 ke
 3. 添加 secret `AISA_API_KEY`；可选 `GOANYAPI_API_KEY`、`RESEND_API_KEY`、`EMAIL_FROM`、`RADAR_EMAIL_TO`、`GSC_TOKEN_JSON`。
 4. 把仓库变量 `RADAR_ENABLED` 设为 `true`。
 
+## VPS 定时采集 + PostgreSQL（产品库）
+
+采集端仍用本地 `state/` 做差分与复盘；配置 `DATABASE_URL` 后，每次 `daily` 会把报告批次与关键词机会矩阵写入 PostgreSQL，供独立前端读取。含 API 预检、飞书/钉钉/Telegram 告警、`flock` 防并发。见 [docs/deploy.md](docs/deploy.md)。
+
 ## 各部分怎么判断
 
 - **帖子里的名字**（`radar/terms.py`）：首字母大写的词、带数字的词（`Qwen3.8`）、中间有大写的词（`HyperFrames`）；名字后面的数字会并进去（`Opus 5.5`）。两个账号都用过的名字算数；只有一个账号用的，需要 100 个赞，而且必须明显是名字，因为首字母大写的词常常只是句子开头。

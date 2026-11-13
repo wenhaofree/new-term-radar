@@ -1,0 +1,24 @@
+# Local PostgreSQL for the product store (reports / keyword_opportunities / discovered_leads).
+# Usage: docker compose up -d
+# Then: DATABASE_URL=postgresql://radar:radar@127.0.0.1:5432/radar
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: radar-postgres
+    environment:
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: radar
+      POSTGRES_DB: radar
+    ports:
+      - "5432:5432"
+    volumes:
+      - radar_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  radar_pg_data:

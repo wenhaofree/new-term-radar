@@ -49,7 +49,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import asks, breakout, config, feeds, gsc, money, new_sites, notify, pains, report, review, revenue, seller_history, sellers, \
+from . import asks, breakout, config, feeds, gsc, money, new_sites, notify, pains, persist, pg, preflight, report, review, revenue, seller_history, sellers, \
     sidelights, sitemaps, sources, store, usecases
 from .i18n import t
 
@@ -94,21 +94,37 @@ def cmd_sources(args, cfg: dict, state: Path) -> int:
 
 
 def cmd_daily(args, cfg: dict, state: Path) -> int:
-    weekly = args.new_sites or date.today().weekday() == cfg["new_sites"]["weekday"]
+    started = time.monotonic()
+    today = date.today()
+    need_revenue = bool(args.revenue or today.weekday() == cfg["revenue"]["weekday"]) and "revenue" not in args.skip
+    if not args.skip_preflight:
+        pf = preflight.run(need_revenue=need_revenue)
+        print(pf.summary(), file=sys.stderr)
+        if not pf.ok:
+            print(notify.alert("radar preflight failed", pf.summary()), file=sys.stderr)
+            return 1
+
+    report_id = None
+    try:
+        report_id = pg.start_report(run_date=today)
+    except Exception as exc:  # noqa: BLE001
+        print(f"pg: start_report failed: {exc}", file=sys.stderr)
+        print(notify.alert("radar postgres start failed", str(exc)[:500]), file=sys.stderr)
+
+    weekly = args.new_sites or today.weekday() == cfg["new_sites"]["weekday"]
     blocks = {
         "x": run(lambda: sources.x_new(cfg, state), "x" in args.skip),
         "hf": run(lambda: sources.hf_new(cfg, state), "hf" in args.skip),
         "breakout": run(lambda: breakout.breakouts(cfg, state), "breakout" in args.skip),
         "sitemap": run(lambda: sitemaps.diff(cfg, state), "sitemaps" in args.skip),
         "newsite": run(lambda: new_sites.new_sites(cfg, state), "newsites" in args.skip or not weekly),
-        "revenue": run(lambda: revenue.products(cfg, state), "revenue" in args.skip or not (
-            args.revenue or date.today().weekday() == cfg["revenue"]["weekday"])),
+        "revenue": run(lambda: revenue.products(cfg, state), "revenue" in args.skip or not need_revenue),
         "ask": run(lambda: asks.asks(cfg, state), "asks" in args.skip or not (
-            args.asks or date.today().weekday() == cfg["asks"]["weekday"])),
+            args.asks or today.weekday() == cfg["asks"]["weekday"])),
         "seller": run(lambda: sellers.sellers(cfg, state), "sellers" in args.skip or not (
-            args.sellers or date.today().weekday() == cfg["sellers"]["weekday"])),
+            args.sellers or today.weekday() == cfg["sellers"]["weekday"])),
         "builder": run(lambda: sellers.builders(cfg, state), "builders" in args.skip or not (
-            args.sellers or date.today().weekday() == cfg["builders"]["weekday"])),
+            args.sellers or today.weekday() == cfg["builders"]["weekday"])),
         "feed": run(lambda: feeds.feeds(cfg, state, weekly=args.feeds), "feeds" in args.skip),
     }
     found = run(lambda: gsc.gsc_new(cfg), "gsc" in args.skip)
@@ -133,17 +149,50 @@ def cmd_daily(args, cfg: dict, state: Path) -> int:
     # ⑩ waits for the keyword table: an AdSense ID belongs to an established site, and the tool sites already on
     # page one for the day's terms are the established ones; ⑥'s and ⑧'s products come after them.
     blocks["money"] = run(lambda: money.money(cfg, state, page_one_tools(extra["usecases"], cfg["money"]["max_dr"]) + paying_sites(blocks)),
-                          "money" in args.skip or not (args.sellers or args.revenue or date.today().weekday() == cfg["money"]["weekday"]))
+                          "money" in args.skip or not (args.sellers or args.revenue or today.weekday() == cfg["money"]["weekday"]))
     extra["tails"] = run(lambda: sidelights.tails(cfg["sidelights"], paying_names(blocks)),
                          "sidelights" in args.skip or not paying_names(blocks))
     rev = run(lambda: review.review(cfg, conn), "review" in args.skip)
     summ = run(lambda: store.summary(conn))
     text = report.daily(cfg, lead, blocks, found, rev, summ, extra)
+    payload = {"leads": lead, **blocks, "gsc": found, "review": rev, "summary": summ, "keywords": extra["usecases"]}
     if args.out:
-        Path(args.out).with_suffix(".json").write_text(json.dumps(
-            {"leads": lead, **blocks, "gsc": found, "review": rev, "summary": summ, "keywords": extra["usecases"]}, ensure_ascii=False, indent=1, default=str))
-    _finish(args, text, f"New-term radar {date.today()}")
-    return 0
+        Path(args.out).with_suffix(".json").write_text(json.dumps(payload, ensure_ascii=False, indent=1, default=str))
+    _finish(args, text, f"New-term radar {today}")
+
+    opportunities = persist.opportunities_from_usecases(extra.get("usecases") or {}, today)
+    discovered = persist.leads_from_report(lead, today)
+    errors = persist.collect_errors(blocks, extra)
+    status = persist.run_status(errors, opportunities, discovered)
+    duration = round(time.monotonic() - started)
+    pg_error = ""
+    try:
+        if pg.configured() or report_id is not None:
+            pg.save_daily_run(
+                report_id=report_id,
+                status=status,
+                duration_seconds=duration,
+                cost_micros=persist.total_cost_micros(blocks, extra),
+                signals_overview=persist.signals_overview(blocks, extra),
+                report_md=text,
+                report_json=payload,
+                errors=errors,
+                opportunities=opportunities,
+                leads=discovered,
+                run_date=today,
+            )
+    except Exception as exc:  # noqa: BLE001
+        pg_error = f"{type(exc).__name__}: {' '.join(str(exc).split())[:200]}"
+        errors = errors + [f"postgres: {pg_error}"]
+        status = "partial" if (opportunities or discovered or text) else "failed"
+        print(f"pg: save_daily_run failed: {pg_error}", file=sys.stderr)
+
+    if errors or pg_error:
+        print(notify.alert(
+            f"radar daily {status} · {today.isoformat()}",
+            "\n".join(errors[:20]) or pg_error,
+        ), file=sys.stderr)
+    return 0 if status == "success" and not pg_error else 1
 
 
 def paying_sites(blocks: dict) -> list[str]:
@@ -270,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--feeds", action="store_true", help="run the weekly feeds (Google's new pages, rising root words) today")
     p.add_argument("--extension", action="append", default=[], metavar="ID", help="for `pains`: a Chrome extension to read the reviews of")
     p.add_argument("--mail", action="store_true", help="mail the report (see radar/notify.py)")
+    p.add_argument("--skip-preflight", action="store_true",
+                   help="for `daily`: skip API key health checks (tests / emergency only)")
     p.add_argument("--platform", action="append", choices=sorted(sellers.PLATFORMS), help="for `history pull` and `update`: one platform (default: all)")
     p.add_argument("--max-usd", type=float, help="for `history pull` (default 20), `update` (default 3) and `sort` (default 30): stop at this spend")
     p.add_argument("--workers", type=int, default=32, help="for `history read`: home pages fetched at a time")
