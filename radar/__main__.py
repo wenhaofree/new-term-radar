@@ -106,7 +106,7 @@ def cmd_daily(args, cfg: dict, state: Path) -> int:
 
     report_id = None
     try:
-        report_id = pg.start_report(run_date=today)
+        report_id = pg.start_report(run_date=today, locale=cfg.get("lang", "en"))
     except Exception as exc:  # noqa: BLE001
         print(f"pg: start_report failed: {exc}", file=sys.stderr)
         print(notify.alert("radar postgres start failed", str(exc)[:500]), file=sys.stderr)

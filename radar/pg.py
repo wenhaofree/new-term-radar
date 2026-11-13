@@ -87,7 +87,24 @@ SELECT
   id, report_id, discovered_date, keyword, kind, behind_names, format,
   volume_band, trend_status, decision, action, is_acted, demoted, brand, source
 FROM keyword_opportunities;
+
+-- UI i18n: enum codes → labels. Frontend: SELECT key, label FROM locale_labels WHERE locale = $1 AND category = $2
+CREATE TABLE IF NOT EXISTS locale_labels (
+  locale    TEXT NOT NULL,
+  category  TEXT NOT NULL,
+  key       TEXT NOT NULL,
+  label     TEXT NOT NULL,
+  PRIMARY KEY (locale, category, key)
+);
+
+CREATE INDEX IF NOT EXISTS locale_labels_locale_idx ON locale_labels (locale);
 """
+
+# Additive columns for DBs created before locale support.
+MIGRATIONS = [
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS locale TEXT NOT NULL DEFAULT 'en'",
+]
+
 
 def database_url() -> str:
     return os.environ.get("DATABASE_URL", "").strip()
@@ -113,22 +130,43 @@ def connect():
 def ensure_schema(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(SCHEMA)
+        for stmt in MIGRATIONS:
+            cur.execute(stmt)
     conn.commit()
+    seed_locale_labels(conn)
 
 
-def start_report(run_date: date | None = None, started_at: datetime | None = None) -> int | None:
+def seed_locale_labels(conn) -> int:
+    """Upsert en/zh UI labels from radar.locale_labels. Returns row count written."""
+    from . import locale_labels
+    rows = locale_labels.rows_for_seed()
+    with conn.cursor() as cur:
+        for locale, category, key, label in rows:
+            cur.execute(
+                """INSERT INTO locale_labels (locale, category, key, label)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (locale, category, key) DO UPDATE SET label = EXCLUDED.label""",
+                (locale, category, key, label),
+            )
+    conn.commit()
+    return len(rows)
+
+
+def start_report(run_date: date | None = None, started_at: datetime | None = None,
+                 locale: str = "en") -> int | None:
     """Insert a running report row. Returns id, or None when Postgres is not configured."""
     if not configured():
         print("pg: DATABASE_URL not set; skipping product DB write", file=sys.stderr)
         return None
     day = run_date or date.today()
     started = started_at or datetime.now(timezone.utc)
+    loc = "zh" if str(locale).lower().startswith("zh") else "en"
     with connect() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO reports (run_date, started_at, status) VALUES (%s, %s, 'running') RETURNING id",
-                (day, started),
+                "INSERT INTO reports (run_date, started_at, status, locale) VALUES (%s, %s, 'running', %s) RETURNING id",
+                (day, started, loc),
             )
             report_id = cur.fetchone()[0]
         conn.commit()

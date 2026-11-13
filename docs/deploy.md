@@ -69,3 +69,8 @@ Override paths with `RADAR_LOCK` / `RADAR_OUT`.
 - Free: `discovered_leads` + `v_keyword_opportunities_free`
 - Paid: `keyword_opportunities` (+ optional `reports.report_md` / `report_json`)
 - Same-day re-runs upsert on `(discovered_date, keyword, kind)` and `(discovered_date, term)`
+- **i18n**: rows store English enum codes (`decision`, `trend_status`, `format`, …). Labels live in `locale_labels` (`locale` = `en` | `zh`). Default report language is `config.lang` (default **en**); `reports.locale` records which language `report_md` used. Keyword terms are never translated.
+
+```sql
+SELECT category, key, label FROM locale_labels WHERE locale = 'zh';
+```
